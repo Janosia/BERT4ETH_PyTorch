@@ -266,3 +266,44 @@ class BERT4ETH(nn.Module):
 
     def init_weights(self):
         pass
+
+
+class DISTILBERT4ETH(nn.Module):
+    def __init__(self, args):
+        super().__init__()
+
+        fix_random_seed_as(args.model_init_seed)
+        # self.init_weights()
+        # embedding for BERT, sum of positional, segment, token embeddings
+        self.embedding = BERTEmbedding(args)
+
+        # multi-layers transformer blocks, deep network reducing everything by a factor of two
+        self.transformer_blocks = nn.ModuleList(
+            [TransformerBlock(args.hidden_size,
+                              args.num_attention_heads // 2,
+                              args.hidden_size * 2,
+                              args.hidden_dropout_prob)
+             for _ in range(args.num_hidden_layers // 2 )])
+
+        self.out = nn.Linear(config["hidden_size"], config["vocab_size"])
+
+    def forward(self, input_ids, counts, values, io_flags, positions):
+
+        mask = (input_ids > 0).unsqueeze(1).repeat(1, input_ids.size(1), 1).unsqueeze(1)
+
+        # embedding the indexed sequence to sequence of vectors
+        x = self.embedding(input_ids, counts, values, io_flags, positions)
+
+        # running over multiple transformer blocks
+        for transformer in self.transformer_blocks:
+            x = transformer.forward(x, mask)
+
+        return x
+
+    def init_weights(self):
+        for module in self.modules():
+            if isinstance(module, (nn.Linear, nn.Embedding)):
+                module.weight.data.normal_(mean=0.0, std=args.initializer_range)
+            elif isinstance(module, nn.LayerNorm):
+                module.bias.data.zero_()
+                module.weight.data.fill_(1.0)
